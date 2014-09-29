@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import sys
-import os.path
+import os
 import platform
 import re
 import json
@@ -8,7 +8,7 @@ import gzip
 import argparse
 from collections import defaultdict
 
-config = '/proc/config.gz'
+config = os.getenv('CONFIG', '/proc/config.gz')
 
 COLORS = defaultdict(lambda :'\033[0;39m')
 COLORS['enabled'] = '\033[1;32m'
@@ -21,6 +21,9 @@ class ArgParser(argparse.ArgumentParser):
         sys.stderr.write('error: %s\n' % message)
         self.print_help()
         sys.exit(2)
+
+def printerr(msg):
+    sys.stderr.write('%s\n' % msg)
 
 def is_set(config_name):
     if config.endswith('.gz'):
@@ -44,34 +47,47 @@ def is_enabled(config_name, mandatory=None):
 def get_cgroup_mount_path(search_for, search_where):
     allmounts = open(search_where,'r')
     for mount_line in allmounts:
-        if mount_line.strip().startswith(search_for):
+        if mount_line.strip().split(' ')[2].startswith(search_for):
             return mount_line.split(' ')[1]
     return ''
 
 def print_config(config_dict):
     print_groups = {
-            "Namespaces" : [ "Namespaces","Utsname namespace","Ipc namespace","Pid namespace",
-                "User namespace","Network namespace","Multiple /dev/pts instances"],
-            "Control groups" : ["Cgroup", "Cgroup clone_children flag", "Cgroup namespace", 
-                "Cgroup device", "Cgroup sched", "Cgroup cpu account", "Cgroup memory controller",
-                "Cgroup cpuset"],
-            "Misc" : ["Veth pair device", "Macvlan", "Vlan", "File capabilities"]
+            'Namespaces' : [ 'Namespaces','Utsname namespace','Ipc namespace','Pid namespace',
+                'User namespace','Network namespace','Multiple /dev/pts instances'],
+            'Control groups' : ['Cgroup', 'Cgroup clone_children flag', 'Cgroup namespace', 
+                'Cgroup device', 'Cgroup sched', 'Cgroup cpu account', 'Cgroup memory controller',
+                'Cgroup cpuset'],
+            'Misc' : ['Veth pair device', 'Macvlan', 'Vlan', 'File capabilities']
             }
-    groups_order = ["Namespaces", "Control groups", "Misc"]
+    groups_order = ['Namespaces', 'Control groups', 'Misc']
 
     normal = COLORS['normal']
+
+    if config != config_orig:
+        print('Kernel configuration not found at %s; searching...' % config_orig)
+
+        if not os.path.isfile(config):
+            script_name = os.path.basename(__file__)
+            printerr('%s: unable to retrieve kernel configuration' % script_name)
+            printerr('Try recompiling with IKCONFIG_PROC, installing the kernel headers,')
+            printerr('or specifying the kernel configuration path with:')
+            printerr('  CONFIG=<path> %s' % script_name)
+            sys.exit(1)
+        else:
+            print('Kernel configuration found at %s' % config)
+
     for name in groups_order:
-        print("--- %s ---" % name)
+        print('--- %s ---' % name)
         for field in print_groups[name]:
             if field not in config_dict :
                 continue
             color = COLORS[config_dict[field].lower()]
-            print("%s: %s%s%s" % (field, color, config_dict[field], normal) )
-        print("")
+            print('%s: %s%s%s' % (field, color, config_dict[field], normal) )
+        print('')
     
-    print("Note : Before booting a new kernel, you can check its configuration")
-    print("usage : CONFIG=/path/to/config /usr/bin/lxc-checkconfig")
-    print("")
+    print('Note : Before booting a new kernel, you can check its configuration')
+    print('usage : CONFIG=/path/to/config /usr/bin/lxc-checkconfig\n')
 
 ####################################
 ## BASH CODE NEED HELP TO CONVERT ##
@@ -104,6 +120,7 @@ kver_major = int(kver_split[0])
 kver_minor = int(kver_split[1])
 
 if not os.path.isfile(config):
+    config_orig = config
     headers_config = '/lib/modules/%s/build/.config' % kver
     boot_config = '/boot/config-%s' % kver
 
@@ -114,62 +131,61 @@ if not os.path.isfile(config):
         config = boot_config
 
 
-
 # Define dict type
 config_dict = {}
 
-
-# Namespaces
-config_dict['Namespaces'] = is_enabled('CONFIG_NAMESPACES', True)
-config_dict['Utsname namespace'] = is_enabled('CONFIG_UTS_NS')
-config_dict['Ipc namespace'] = is_enabled('CONFIG_IPC_NS', True)
-config_dict['Pid namespace'] = is_enabled('CONFIG_PID_NS', True)
-config_dict['User namespace'] = is_enabled('CONFIG_USER_NS')
-config_dict['Network namespace'] = is_enabled('CONFIG_NET_NS')
-config_dict['Multiple /dev/pts instances'] = is_enabled('CONFIG_DEVPTS_MULTIPLE_INSTANCES')
-
-
-
-# Control groups
-config_dict['Cgroup'] = is_enabled('CONFIG_CGROUPS', True)
-if os.path.isfile('%s/cgroup.clone_children' % cgroup_mnt_path):
-    config_dict['Cgroup clone_children flag'] = 'enabled'
-else:
-    config_dict['Cgroup namespace'] = is_enabled('CONFIG_CGROUP_NS', True)
-config_dict['Cgroup device'] = is_enabled('CONFIG_CGROUP_DEVICE')
-config_dict['Cgroup sched'] = is_enabled('CONFIG_CGROUP_SCHED')
-config_dict['Cgroup cpu account'] = is_enabled('CONFIG_CGROUP_CPUACCT')
-
-if kver_major >= 3 and kver_minor >= 6:
-    config_dict['Cgroup memory controller'] = is_enabled('CONFIG_MEMCG')
-else:
-    config_dict['Cgroup memory controller'] = is_enabled('CONFIG_CGROUP_MEM_RES_CTLR')
-
-if is_set('CONFIG_SMP'):
-    config_dict['Cgroup cpuset'] = is_enabled('CONFIG_CPUSETS')
+if os.path.isfile(config):
+    # Namespaces
+    config_dict['Namespaces'] = is_enabled('CONFIG_NAMESPACES', True)
+    config_dict['Utsname namespace'] = is_enabled('CONFIG_UTS_NS')
+    config_dict['Ipc namespace'] = is_enabled('CONFIG_IPC_NS', True)
+    config_dict['Pid namespace'] = is_enabled('CONFIG_PID_NS', True)
+    config_dict['User namespace'] = is_enabled('CONFIG_USER_NS')
+    config_dict['Network namespace'] = is_enabled('CONFIG_NET_NS')
+    config_dict['Multiple /dev/pts instances'] = is_enabled('CONFIG_DEVPTS_MULTIPLE_INSTANCES')
 
 
 
-# Misc
-config_dict['Veth pair device'] = is_enabled('CONFIG_VETH')
-config_dict['Macvlan'] = is_enabled('CONFIG_MACVLAN')
-config_dict['Vlan'] = is_enabled('CONFIG_VLAN_8021Q')
+    # Control groups
+    config_dict['Cgroup'] = is_enabled('CONFIG_CGROUPS', True)
+    if os.path.isfile('%s/cgroup.clone_children' % cgroup_mnt_path):
+        config_dict['Cgroup clone_children flag'] = 'enabled'
+    else:
+        config_dict['Cgroup namespace'] = is_enabled('CONFIG_CGROUP_NS', True)
+    config_dict['Cgroup device'] = is_enabled('CONFIG_CGROUP_DEVICE')
+    config_dict['Cgroup sched'] = is_enabled('CONFIG_CGROUP_SCHED')
+    config_dict['Cgroup cpu account'] = is_enabled('CONFIG_CGROUP_CPUACCT')
 
-if kver_major == 2 and kver_minor < 33:
-    config_dict['File capabilities'] = is_enabled('CONFIG_SECURITY_FILE_CAPABILITIES')
-if (kver_major == 2 and kver_minor > 32) or kver_major > 2:
-    config_dict['File capabilities'] = 'enabled'
+    if kver_major >= 3 and kver_minor >= 6:
+        config_dict['Cgroup memory controller'] = is_enabled('CONFIG_MEMCG')
+    else:
+        config_dict['Cgroup memory controller'] = is_enabled('CONFIG_CGROUP_MEM_RES_CTLR')
+
+    if is_set('CONFIG_SMP'):
+        config_dict['Cgroup cpuset'] = is_enabled('CONFIG_CPUSETS')
 
 
 
-if __name__ == "__main__":
+    # Misc
+    config_dict['Veth pair device'] = is_enabled('CONFIG_VETH')
+    config_dict['Macvlan'] = is_enabled('CONFIG_MACVLAN')
+    config_dict['Vlan'] = is_enabled('CONFIG_VLAN_8021Q')
+
+    if kver_major == 2 and kver_minor < 33:
+        config_dict['File capabilities'] = is_enabled('CONFIG_SECURITY_FILE_CAPABILITIES')
+    if (kver_major == 2 and kver_minor > 32) or kver_major > 2:
+        config_dict['File capabilities'] = 'enabled'
+
+
+if __name__ == '__main__':
 
     parser = ArgParser(description='Set network for a new container')
     parser.add_argument('-j','--json', help='output in JSON format', action='store_true')
     args = vars(parser.parse_args())
 
     if args['json']:
+        if not os.path.isfile(config):
+            config_dict['error'] = 'unable to retrieve kernel configuration'
         print(json.dumps(config_dict, sort_keys=True, indent=4, separators=(',', ': ')))
     else:
         print_config(config_dict)
-
