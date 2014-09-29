@@ -1,18 +1,32 @@
 #!/usr/bin/env python
+import sys
 import os.path
 import platform
 import re
 import json
 import gzip
+import argparse
+from collections import defaultdict
 
 config = '/proc/config.gz'
 
+COLORS = defaultdict(lambda :'\033[0;39m')
+COLORS['enabled'] = '\033[1;32m'
+COLORS['requred'] = '\033[1;31m'
+COLORS['missing'] = '\033[1;33m'
+
+# simplify error handling for argparse
+class ArgParser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write('error: %s\n' % message)
+        self.print_help()
+        sys.exit(2)
 
 def is_set(config_name):
     if config.endswith('.gz'):
-        config_file = gzip.open(config, 'r')
+        config_file = [ i.decode('utf-8') for i in gzip.open(config, 'r').readlines()]
     else:
-        config_file = open(config, 'r')
+        config_file = [ i for i in open(config, 'r').readlines()]
 
     for line in config_file:
         if re.match('%s=[y|m]' % config_name, line):
@@ -33,6 +47,31 @@ def get_cgroup_mount_path(search_for, search_where):
         if mount_line.strip().startswith(search_for):
             return mount_line.split(' ')[1]
     return ''
+
+def print_config(config_dict):
+    print_groups = {
+            "Namespaces" : [ "Namespaces","Utsname namespace","Ipc namespace","Pid namespace",
+                "User namespace","Network namespace","Multiple /dev/pts instances"],
+            "Control groups" : ["Cgroup", "Cgroup clone_children flag", "Cgroup namespace", 
+                "Cgroup device", "Cgroup sched", "Cgroup cpu account", "Cgroup memory controller",
+                "Cgroup cpuset"],
+            "Misc" : ["Veth pair device", "Macvlan", "Vlan", "File capabilities"]
+            }
+    groups_order = ["Namespaces", "Control groups", "Misc"]
+
+    normal = COLORS['normal']
+    for name in groups_order:
+        print("--- %s ---" % name)
+        for field in print_groups[name]:
+            if field not in config_dict :
+                continue
+            color = COLORS[config_dict[field].lower()]
+            print("%s: %s%s%s" % (field, color, config_dict[field], normal) )
+        print("")
+    
+    print("Note : Before booting a new kernel, you can check its configuration")
+    print("usage : CONFIG=/path/to/config /usr/bin/lxc-checkconfig")
+    print("")
 
 ####################################
 ## BASH CODE NEED HELP TO CONVERT ##
@@ -123,5 +162,14 @@ if (kver_major == 2 and kver_minor > 32) or kver_major > 2:
 
 
 
-print(json.dumps(config_dict, sort_keys=True,
-                 indent=4, separators=(',', ': ')))
+if __name__ == "__main__":
+
+    parser = ArgParser(description='Set network for a new container')
+    parser.add_argument('-j','--json', help='output in JSON format', action='store_true')
+    args = vars(parser.parse_args())
+
+    if args['json']:
+        print(json.dumps(config_dict, sort_keys=True, indent=4, separators=(',', ': ')))
+    else:
+        print_config(config_dict)
+
