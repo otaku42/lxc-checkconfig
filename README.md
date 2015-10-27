@@ -1,7 +1,7 @@
-# lxc-checkconfig
+lxc-checkconfig
 ===============
 Checks whether a given kernel configuration file fulfills all requirements for
-LXC. 
+LXC.
 
 This tool is a reimplementation of the lxc-checkconfig.sh script that comes as
 part of LXC. It provides a bit more functionality, however, such as returning
